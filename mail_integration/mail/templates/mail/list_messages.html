@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Email Messages</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/4.5.2/css/bootstrap.min.css">
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h2>Email Messages</h2>
+        <!-- Форма для логина и пароля -->
+        <form id="login-form">
+            <div class="form-group">
+                <label for="email">Email:</label>
+                <input type="email" class="form-control" id="email" placeholder="Enter your email" required>
+            </div>
+            <div class="form-group">
+                <label for="password">Password:</label>
+                <input type="password" class="form-control" id="password" placeholder="Enter your password" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Start Fetching Messages</button>
+        </form>
+
+        <div class="progress mt-3">
+            <div class="progress-bar" id="progress-bar" role="progressbar" style="width: 0%;">Подготовка к загрузке сообщений...</div>
+        </div>
+        <p id="status-text" class="mt-2" style="color: black;"></p>
+        <table class="table table-bordered mt-3">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Subject</th>
+                    <th>Sent Date</th>
+                    <th>Received Date</th>
+                    <th>Body</th>
+                    <th>Attachments</th>
+                </tr>
+            </thead>
+            <tbody id="messages-table">
+                <!-- Rows will be inserted by JavaScript -->
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        // При загрузке страницы загружаем все сообщения из базы данных
+        $(document).ready(function() {
+            $.ajax({
+                url: '/api/messages/',
+                method: 'GET',
+                success: function(response) {
+                    const messages = response.messages;
+                    messages.forEach(function(data) {
+                        const attachmentsHtml = data.attachments.map(function(attachment) {
+                            const filename = attachment.split('/').pop();
+                            return `<a href="/media/${filename}" download>${filename}</a>`;
+                        }).join(', ');
+
+                        // Добавляем сообщения в порядке от новых к старым
+                        $('#messages-table').append(`
+                            <tr>
+                                <td>${data.id}</td>
+                                <td>${data.subject}</td>
+                                <td>${data.sent_date}</td>
+                                <td>${data.received_date}</td>
+                                <td>${data.body}</td>
+                                <td>${attachmentsHtml}</td>
+                            </tr>
+                        `);
+                    });
+                }
+            });
+        });
+
+        // Настраиваем WebSocket для получения новых сообщений
+        const socket = new WebSocket('ws://' + window.location.host + '/ws/messages/');
+
+        document.getElementById('login-form').addEventListener('submit', function(event) {
+            event.preventDefault();
+            
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+
+            // Отправляем данные логина и пароля на WebSocket
+            socket.send(JSON.stringify({
+                email: email,
+                password: password
+            }));
+        });
+
+        socket.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+
+            if (data.type === 'status') {
+                $('#status-text').text(data.message);
+            } else if (data.type === 'progress') {
+                const progressValue = (parseFloat(data.progress.split(' / ')[0]) / parseFloat(data.progress.split(' / ')[1])) * 100;
+                $('#progress-bar').css('width', progressValue + '%').text(data.progress);
+            } else if (data.type === 'message') {
+                const attachmentsHtml = data.attachments.map(function(attachment) {
+                    const filename = attachment.split('/').pop();
+                    return `<a href="/media/${filename}" download>${filename}</a>`;
+                }).join(', ');
+
+                // Добавляем новые сообщения наверх таблицы
+                $('#messages-table').prepend(`
+                    <tr>
+                        <td>${data.id}</td>
+                        <td>${data.subject}</td>
+                        <td>${data.sent_date}</td>
+                        <td>${data.received_date}</td>
+                        <td>${data.body.substring(0, 50)}</td>
+                        <td>${attachmentsHtml}</td>
+                    </tr>
+                `);
+            } else if (data.type === 'complete') {
+                // Проверяем статус и отображаем уведомление
+                $('#progress-bar').text(data.status);
+                $('#status-text').text(data.status).css('color', 'green');
+            }
+        };
+    </script>
+</body>
+</html>
